@@ -1,13 +1,14 @@
 package utils;
 
 
-import domain.DocumentFile;
 import lombok.experimental.UtilityClass;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 
 @UtilityClass
 public class ScraperHelper {
@@ -75,7 +76,15 @@ public class ScraperHelper {
         return null;
     }
 
-    public static Elements getRowFromSubTable(Element table) {
-        return table.getElementsByClass("odd-parent");
+    public static Elements getRowsFromSubTable(Element table) {
+        ArrayList<Element> rowsList = new ArrayList<>();
+        Elements allRows = table.children();
+        for (Element row: allRows) {
+            if(row.hasClass("odd-parent")){
+                rowsList.add(row);
+            }
+
+        }
+        return new Elements(rowsList);
     }
 }

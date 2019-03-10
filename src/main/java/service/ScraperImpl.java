@@ -1,7 +1,5 @@
 package service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import domain.DocumentFile;
 import domain.Level;
 import domain.Paragraph;
@@ -14,7 +12,6 @@ import utils.ScraperConstants;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -27,7 +24,7 @@ public class ScraperImpl implements Scraper {
 
     @Override
     public List<DocumentFile> scrap() {
-        Document document = getJsoupConnection();
+        Document document = getJsoupConnection(ScraperConstants.URL);
 
         Element mainTable = getMainTable(document);
         List<DocumentFile> files = new ArrayList<>();
@@ -60,7 +57,7 @@ public class ScraperImpl implements Scraper {
 
             documentFile.setLevel(level);
             files.add(documentFile);
-            getInfoByTitle(currentElement, documentFile);
+            getInfoByTitle(currentElement, documentFile, level);
 
 
             currentElement = currentElement.nextElementSibling();
@@ -69,58 +66,73 @@ public class ScraperImpl implements Scraper {
         return files;
     }
 
-    private void getInfoByTitle(Element currentElement, DocumentFile file) throws IOException {
+    private void getInfoByTitle(Element currentElement, DocumentFile file, Level parentLevel) throws IOException {
 
-        final Elements sections = getSections(currentElement);
+        Elements sections = getSections(currentElement);
         if (sections.size() == 0) {
-            String chapterPageLink = getLink(currentElement);
-            Document chapterPage = Jsoup.connect(chapterPageLink).get();
-            Element chaptersTable = getSubTable(chapterPage);
-            Elements rowChapterElements = getRowFromSubTable(chaptersTable);
-            getInfoByChapterElement(rowChapterElements, file);
+            Elements rowsFromChapterTable = getElementsFromNextPage(getJsoupConnection(getLink(currentElement)));
+            getInfoByChapterElement(rowsFromChapterTable, file, parentLevel);
         }
     }
 
-    private void getInfoByChapterElement(Elements rowChapterElements, DocumentFile file) throws IOException {
+    private void getInfoByChapterElement(Elements rowChapterElements, DocumentFile file, Level parentLevel) throws IOException {
         for (Element rowChapterElement : rowChapterElements) {
-
             Element cellChapterNumber = getCellContent(rowChapterElement, CELL_NUMBER_INDEX);
             Element cellChapterName = getCellContent(rowChapterElement, CELL_NAME_INDEX);
             String heading = cellChapterName.text();
-            Level childLevel = new Level();
-            childLevel.setHeading(heading);
-            Level lastLevel = file.getLevel().returnLastLevel();
-            if (lastLevel == null) {
-                childLevel.setPath(file.getLevel().getPath());
-                childLevel.appendPathName(heading);
-                file.getLevel().getChildLevel().add(childLevel);
-            } else {
-                String path = lastLevel.getPath();
-                childLevel.setPath(path);
-                childLevel.appendPathName(heading);
-                lastLevel.setChildLevel(Collections.singletonList(childLevel));
-            }
+            Level chapter = new Level();
+            chapter.setHeading(heading);
+            String path = parentLevel.getPath();
+            chapter.setPath(path);
+            chapter.appendPathName(heading);
+            parentLevel.getChildLevel().add(chapter);
 
-            String chapterPageLink = getLink(cellChapterNumber);
-            Document chapterPage = Jsoup.connect(chapterPageLink).get();
-            if (isTabExist(chapterPage)) {
-                processSections(rowChapterElement, file);
-            } else {
+            Elements rowsFromSubchaptersTable = getElementsFromNextPage(getJsoupConnection(getLink(cellChapterNumber)));
+            getInfoBySubchapter(rowsFromSubchaptersTable, file, chapter);
 
-                Element chaptersTable = getSubTable(chapterPage);
-                if (chaptersTable == null) {
-                    return;
-                }
-                Elements rowSubChapterElements = getRowFromSubTable(chaptersTable);
-
-                getInfoByChapterElement(rowSubChapterElements, file);
-            }
 
         }
     }
 
-    private void processSections(Element rowChapterElement, DocumentFile file) throws IOException {
-        Level lastLevel = file.getLevel().returnLastHasText();
+    private void getInfoBySubchapter(Elements rowSubchapterElements, DocumentFile file, Level chapter) throws IOException {
+        for (Element rowSubchapterElement : rowSubchapterElements) {
+            Element cellSubchapterNumber = getCellContent(rowSubchapterElement, CELL_NUMBER_INDEX);
+            Element cellSubchapterName = getCellContent(rowSubchapterElement, CELL_NAME_INDEX);
+            String heading = cellSubchapterName.text();
+            Level subchapter = new Level();
+            subchapter.setHeading(heading);
+            String path = chapter.getPath();
+            subchapter.setPath(path);
+            subchapter.appendPathName(heading);
+
+            chapter.getChildLevel().add(subchapter);
+
+            Elements partElements = getElementsFromNextPage(getJsoupConnection(getLink(cellSubchapterNumber)));
+            getInfoByPart(partElements, file, subchapter);
+        }
+    }
+
+    private Elements getElementsFromNextPage(Document page){
+        return getRowsFromSubTable(getSubTable(page));
+    }
+
+
+    private void getInfoByPart(Elements partElements, DocumentFile file, Level subchapter) throws IOException {
+        for (Element partElement : partElements) {
+            Element cellSubchapterName = getCellContent(partElement, CELL_NAME_INDEX);
+            String heading = cellSubchapterName.text();
+            Level part = new Level();
+            part.setHeading(heading);
+            String path = subchapter.getPath();
+            part.setPath(path);
+            part.appendPathName(heading);
+            subchapter.getChildLevel().add(part);
+            processSections(partElement, file, part);
+        }
+    }
+
+
+    private void processSections(Element rowChapterElement, DocumentFile file, Level parentLevel) throws IOException {
         String chapterPageLink = getLink(rowChapterElement);
         Document tabPage = Jsoup.connect(chapterPageLink).get();
         Element tabElements = getTab(tabPage);
@@ -131,7 +143,7 @@ public class ScraperImpl implements Scraper {
         for (Element header : headers) {
             String heading = getHeadingText(header);
             String citation = getCitation(header);
-            final Element element = header.nextElementSibling();
+            Element element = header.nextElementSibling();
             if (element.hasClass("doc-block")) {
                 List<Paragraph> paragraphs = getParagraphs(element)
                         .stream()
@@ -145,36 +157,23 @@ public class ScraperImpl implements Scraper {
                         .citation(citation)
                         .text(text)
                         .build();
-                level.setPath(lastLevel.getPath());
+                level.setPath(parentLevel.getPath());
                 level.appendPathName(heading);
                 level.setTextExist(Boolean.TRUE);
                 citationLevels.add(level);
             }
         }
-        lastLevel.returnLastLevel().setChildLevel(citationLevels);
+        parentLevel.setChildLevel(citationLevels);
     }
 
-    private List<Paragraph> processParagraphs(Elements sections) {
-
-        List<Paragraph> list = new ArrayList<>();
-
-        for (Element section : sections) {
-            List<String> paragraphs = getParagraphs(section);
-            final List<Paragraph> collect = paragraphs.stream().map(Paragraph::new).collect(Collectors.toList());
-            list.addAll(collect);
-        }
-        return list;
-
-    }
-
-
-    private Document getJsoupConnection() {
+    private Document getJsoupConnection(String link) {
         try {
-            return Jsoup.connect(ScraperConstants.URL).get();
+            return Jsoup.connect(link).get();
         } catch (IOException e) {
-            System.out.println("Error while get jsoup connection = " + e.getMessage());
+            System.out.println("Error while getting jsoup connection = " + e.getMessage());
         }
         return null;
     }
 
 }
+

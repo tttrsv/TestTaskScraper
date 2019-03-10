@@ -9,5 +9,5 @@ public class ScraperConstants {
     public static final int HEADER_CONTENT_INDEX = 3;
     public static final int CELL_NUMBER_INDEX = 1;
     public static final int CELL_NAME_INDEX = 2;
-    public static final String LAST_ELEMENT_HEADER_TITLE = "Title 210";
+    public static final String LAST_ELEMENT_HEADER_TITLE = "Title 110";
 }
